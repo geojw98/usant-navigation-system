@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Smart Campus Navigation</title>
+
+<style>
+body {
+    font-family: 'Segoe UI', sans-serif;
+    background: linear-gradient(135deg, #257ced, #f0fdf4);
+    text-align: center;
+}
+
+.logo { width: 500px; display: block; margin: 15px auto 5px; }
+h1 { color: #333; }
+
+.controls { margin: 15px; }
+select, button { padding: 8px; margin: 5px; border-radius: 8px; border: none; }
+button { background: #610428; color: white; cursor: pointer; }
+button:hover { background: #339af0; }
+
+#campusMap {
+    width: 90%;
+    height: 500px;
+    margin: auto;
+    border: 2px solid #ccc;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+    background-color: #decd0e;
+    background-image:
+        linear-gradient(#e9ecef 1px, transparent 1px),
+        linear-gradient(90deg, #e9ecef 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+.building {
+    position: absolute;
+    width: 65px;
+    height: 65px;
+    border-radius: 20px;
+    background: linear-gradient(145deg, #330404, #f1f3f5);
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+    font-size: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.building:hover { transform: scale(1.15) rotate(2deg); }
+.start { background: #69db7c !important; }
+.end { background: #ff6b6b !important; }
+.path { background: #ffd43b !important; }
+
+.path-line {
+    position: absolute;
+    height: 3px;
+    background: #ac2774;
+    transform-origin: left;
+}
+
+.distance-label {
+    position: absolute;
+    background: white;
+    padding: 3px 6px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: bold;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    transform: translate(-50%, -50%);
+    color: #333;
+}
+
+#result { margin-top: 15px; font-weight: bold; }
+</style>
+</head>
+
+<body>
+
+<img src="usantlogo.png.webp" alt="Campus Logo" class="logo">
+<h1>USANT Navigation System</h1>
+
+<div class="controls">
+    <select id="start"></select>
+    <select id="end"></select>
+    <button onclick="findPath()">Find Shortest Path</button>
+    <button onclick="checkConnection()">Check Connection</button>
+</div>
+
+<div id="campusMap"></div>
+<div id="result"></div>
+
+<script>
+// ===== LOCATIONS =====
+const locations = {
+    "Registrar": {x:10,y:20},
+    "Library": {x:30,y:20},
+    "CIBM": {x:50,y:20},
+    "Engineering": {x:70,y:20},
+    "Gate 1": {x:10,y:50},
+    "Guidance": {x:30,y:50},
+    "MIS": {x:50,y:50},
+    "SHS": {x:70,y:50},
+    "President": {x:10,y:80},
+    "Auditor": {x:30,y:80},
+    "Research": {x:50,y:80},
+    "Events": {x:70,y:80}
+};
+
+// ===== CONNECTIONS =====
+const connections = [
+    ["Registrar","Library"],["Library","CIBM"],["CIBM","Engineering"],
+    ["Registrar","Gate 1"],["Library","Guidance"],["CIBM","MIS"],
+    ["Engineering","SHS"],["Gate 1","Guidance"],["Guidance","MIS"],
+    ["MIS","SHS"],["Gate 1","President"],["Guidance","Auditor"],
+    ["MIS","Research"],["SHS","Events"]
+];
+
+// ===== GRAPH & DISTANCES =====
+const graph = {};
+const edgeDistances = {}; // store distances to reuse for labels
+
+Object.keys(locations).forEach(n => graph[n]=[]);
+
+function computeDistance(a,b){
+    let raw = Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2);
+    let km = Math.max(2, Math.min(20, Math.round(raw / 5))); // keep 2-20 km
+    return km;
+}
+
+// populate graph and store distances
+connections.forEach(([a,b])=>{
+    let d = computeDistance(locations[a], locations[b]);
+    graph[a].push({node:b,weight:d});
+    graph[b].push({node:a,weight:d});
+    edgeDistances[[a,b].sort().join("-")] = d; // store for labels
+});
+
+// ===== DROPDOWN =====
+function populateDropdowns(){
+    let s=document.getElementById("start");
+    let e=document.getElementById("end");
+    Object.keys(locations).forEach(loc=>{
+        s.innerHTML += `<option>${loc}</option>`;
+        e.innerHTML += `<option>${loc}</option>`;
+    });
+}
+
+// ===== RENDER MAP =====
+function renderMap(){
+    const map = document.getElementById("campusMap");
+    Object.entries(locations).forEach(([name,data])=>{
+        let b=document.createElement("div");
+        b.className="building";
+        b.style.left=data.x+"%";
+        b.style.top=data.y+"%";
+        b.innerHTML=`🏢<br>${name}`;
+        map.appendChild(b);
+    });
+}
+
+// ===== DIJKSTRA =====
+function dijkstra(start,end){
+    let dist={}, prev={}, nodes=new Set(Object.keys(graph));
+    Object.keys(graph).forEach(n=>{ dist[n]=Infinity; prev[n]=null; });
+    dist[start]=0;
+
+    while(nodes.size){
+        let curr=[...nodes].reduce((a,b)=>dist[a]<dist[b]?a:b);
+        nodes.delete(curr);
+        graph[curr].forEach(n=>{
+            let alt=dist[curr]+n.weight;
+            if(alt<dist[n.node]){
+                dist[n.node]=alt;
+                prev[n.node]=curr;
+            }
+        });
+    }
+
+    let path=[], curr=end;
+    while(curr){ path.unshift(curr); curr=prev[curr]; }
+    return {path, distance:dist[end]};
+}
+
+// ===== BFS =====
+function isConnected(start,end){
+    let visited=new Set(), queue=[start];
+    while(queue.length){
+        let node=queue.shift();
+        if(node===end) return true;
+        graph[node].forEach(n=>{
+            if(!visited.has(n.node)){ visited.add(n.node); queue.push(n.node); }
+        });
+    }
+    return false;
+}
+
+// ===== VISUALIZE =====
+function clearMap(){
+    document.querySelectorAll(".building").forEach(b=>b.classList.remove("start","end","path"));
+    document.querySelectorAll(".path-line").forEach(l=>l.remove());
+    document.querySelectorAll(".distance-label").forEach(l=>l.remove());
+}
+
+function drawLine(a,b){
+    const map=document.getElementById("campusMap");
+    let x1=locations[a].x, y1=locations[a].y;
+    let x2=locations[b].x, y2=locations[b].y;
+
+    let dx=x2-x1, dy=y2-y1, length=Math.sqrt(dx*dx+dy*dy);
+    let angle=Math.atan2(dy,dx)*180/Math.PI;
+
+    let line=document.createElement("div");
+    line.className="path-line";
+    line.style.width=length+"%";
+    line.style.left=x1+"%";
+    line.style.top=y1+"%";
+    line.style.transform=`rotate(${angle}deg)`;
+    map.appendChild(line);
+
+    // show actual stored distance inside the map
+    let key = [a,b].sort().join("-");
+    let label = document.createElement("div");
+    label.className="distance-label";
+    label.style.left=((x1+x2)/2)+"%";
+    label.style.top=((y1+y2)/2)+"%";
+    label.innerText=edgeDistances[key] + " km";
+    map.appendChild(label);
+}
+
+function visualize(path){
+    const buildings=document.querySelectorAll(".building");
+    buildings.forEach(b=>{
+        let name=b.innerText.replace("🏢","").trim();
+        if(name===path[0]) b.classList.add("start");
+        else if(name===path[path.length-1]) b.classList.add("end");
+        else if(path.includes(name)) b.classList.add("path");
+    });
+    for(let i=0;i<path.length-1;i++){ drawLine(path[i],path[i+1]); }
+}
+
+// ===== BUTTONS =====
+function findPath(){
+    clearMap();
+    let s=document.getElementById("start").value;
+    let e=document.getElementById("end").value;
+    let res=dijkstra(s,e);
+    visualize(res.path);
+    document.getElementById("result").innerHTML=`✨ Path: ${res.path.join(" → ")}<br>📏 Distance: ${res.distance} km`;
+}
+
+function checkConnection(){
+    let s=document.getElementById("start").value;
+    let e=document.getElementById("end").value;
+    document.getElementById("result").innerHTML=isConnected(s,e)?"✅ Connected":"❌ Not Connected";
+}
+
+// INIT
+populateDropdowns();
+renderMap();
+</script>
+</body>
+</html>
